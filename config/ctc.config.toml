@@ -1,0 +1,12 @@
+# إعدادات CTC sidecar
+upstream_url = "http://127.0.0.1:8080"      # عنوان الميكروسيرفس الأصلي
+listen_addr = "0.0.0.0:9000"                # منفذ الاعتراض (يستقبل traffic بدل الخدمة مباشرة)
+metrics_addr = "0.0.0.0:9090"               # Prometheus — القسم 5
+admin_addr = "127.0.0.1:9091"               # ⚠️ يجب حصره بشبكة داخلية/mTLS في الإنتاج
+
+rules_dir = "./rules"
+sqlite_path = "./ctc_anomalies.db"
+audit_log_path = "./ctc_audit.log"
+
+# سر التوقيع لعمليات إعادة تحميل القواعد — استبدله بمفتاح حقيقي ولا تُبقِه في هذا الملف بالإنتاج
+reload_shared_secret = "change-me-in-production"

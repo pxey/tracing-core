@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  # الخدمة الأصلية (مثال) — استبدلها بميكروسيرفس المستخدم الفعلي
+  business-service:
+    image: your-org/checkout-service:latest
+    ports:
+      - "8080:8080"
+
+  # الـ CTC sidecar — يُنشر بجوار الخدمة، لا داخل كودها
+  ctc-sidecar:
+    build: .
+    depends_on:
+      - business-service
+    ports:
+      - "9000:9000"   # منفذ الاعتراض (وجّه الـ traffic هنا بدل 8080 مباشرة)
+      - "9090:9090"   # Prometheus
+      - "127.0.0.1:9091:9091"  # Admin API — محصور على localhost فقط، لا يُنشر علنًا
+    volumes:
+      - ./rules:/app/rules:ro
+      - ctc-data:/app/data
+    cgroup_parent: ctc.slice   # لتطبيق قيود CPU/RAM على مستوى cgroups (القسم 6)
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "80M"
+
+  # اختياري: للمقارنة عبر النسخ المتعددة (القسم 7) — فعّل feature = redis-cross-instance
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  ctc-data:

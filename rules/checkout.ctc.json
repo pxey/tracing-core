@@ -1,0 +1,36 @@
+{
+  "rule_id": "R-1045",
+  "trigger": "POST /api/checkout",
+  "critical": true,
+  "constraints": [
+    {
+      "id": "total_matches_calculation",
+      "assert": {
+        "<=": [
+          {
+            "abs_diff": [
+              { "var": "response.total" },
+              {
+                "-": [
+                  { "*": [{ "var": "request.price" }, { "var": "request.quantity" }] },
+                  { "var": ["request.discount", 0] }
+                ]
+              }
+            ]
+          },
+          0.01
+        ]
+      },
+      "severity": "warning",
+      "sensitive_fields": ["request.price", "response.total"]
+    },
+    {
+      "id": "stock_not_oversold",
+      "assert": {
+        "<=": [{ "var": "response.stock" }, { "var": "request.quantity" }]
+      },
+      "severity": "critical",
+      "sensitive_fields": []
+    }
+  ]
+}
