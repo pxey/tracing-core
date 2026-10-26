@@ -34,11 +34,15 @@ pub async fn run_resource_monitor(austerity: Arc<AusterityMode>) {
     loop {
         interval.tick().await;
 
-        let rss_mb = read_process_rss_mb().unwrap_or(0);
-        let usage_percent = (rss_mb as f64 / MEMORY_SOFT_LIMIT_MB as f64) * 100.0;
+        let Some((rss_mb, usage_percent, should_be_active)) = evaluate_rss(read_process_rss_mb())
+        else {
+            // لا تفسّر القياس المفقود على أنه صفر؛ أبقِ الوضع الحالي كما هو.
+            // هذا يمنع قراءة RSS الفاشلة من إلغاء وضع التقشف بصورة خاطئة.
+            tracing::debug!("تعذرت قراءة RSS؛ الإبقاء على حالة وضع التقشف الحالية");
+            continue;
+        };
 
         let was_active = austerity.is_active();
-        let should_be_active = usage_percent >= AUSTERITY_THRESHOLD_PERCENT;
 
         if should_be_active && !was_active {
             tracing::warn!(
@@ -53,6 +57,13 @@ pub async fn run_resource_monitor(austerity: Arc<AusterityMode>) {
             austerity.active.store(false, Ordering::Relaxed);
         }
     }
+}
+
+fn evaluate_rss(rss_mb: Option<u64>) -> Option<(u64, f64, bool)> {
+    let rss_mb = rss_mb?;
+    let usage_percent = (rss_mb as f64 / MEMORY_SOFT_LIMIT_MB as f64) * 100.0;
+    let should_be_active = usage_percent >= AUSTERITY_THRESHOLD_PERCENT;
+    Some((rss_mb, usage_percent, should_be_active))
 }
 
 #[cfg(target_os = "linux")]
@@ -70,4 +81,30 @@ fn read_process_rss_mb() -> Option<u64> {
 #[cfg(not(target_os = "linux"))]
 fn read_process_rss_mb() -> Option<u64> {
     None // على أنظمة غير لينكس، يُعتمد بديل عبر crate مثل sysinfo في الإنتاج
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_rss_does_not_become_zero_usage() {
+        assert_eq!(evaluate_rss(None), None);
+    }
+
+    #[test]
+    fn austerity_starts_at_seventy_percent() {
+        let (rss_mb, usage_percent, active) = evaluate_rss(Some(56)).unwrap();
+        assert_eq!(rss_mb, 56);
+        assert_eq!(usage_percent, 70.0);
+        assert!(active);
+    }
+
+    #[test]
+    fn austerity_stays_off_below_threshold() {
+        let (rss_mb, usage_percent, active) = evaluate_rss(Some(55)).unwrap();
+        assert_eq!(rss_mb, 55);
+        assert_eq!(usage_percent, 68.75);
+        assert!(!active);
+    }
 }
