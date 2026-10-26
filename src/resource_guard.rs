@@ -34,8 +34,7 @@ pub async fn run_resource_monitor(austerity: Arc<AusterityMode>) {
     loop {
         interval.tick().await;
 
-        let Some((rss_mb, usage_percent, should_be_active)) =
-            evaluate_rss(read_process_rss_mb())
+        let Some((rss_mb, usage_percent, should_be_active)) = evaluate_rss(read_process_rss_mb())
         else {
             // لا تفسّر القياس المفقود على أنه صفر؛ أبقِ الوضع الحالي كما هو.
             // هذا يمنع قراءة RSS الفاشلة من إلغاء وضع التقشف بصورة خاطئة.
