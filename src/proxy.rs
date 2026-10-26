@@ -34,7 +34,7 @@ pub struct ProxyState {
     pub anomaly_store: Arc<AnomalyStore>,
     pub sender: mpsc::Sender<EvalJob>,
     request_counter_window: AtomicU64, // Requests counted during the current one-second window.
-    current_rps: AtomicU64, // Completed one-second request count used for sampling.
+    current_rps: AtomicU64,            // Completed one-second request count used for sampling.
 }
 
 pub struct EvalJob {
@@ -163,10 +163,7 @@ pub async fn handle(
     // 4) بعد بناء الرد للإرسال، أرسل نسخة للتقييم بشكل غير حاجز تمامًا (best-effort)
     let response_json: Value = serde_json::from_slice(&resp_bytes).unwrap_or(Value::Null);
     let rules_snapshot = proxy.rules.read().clone();
-    let is_critical = rules_snapshot
-        .matching(&trigger)
-        .iter()
-        .any(|r| r.critical);
+    let is_critical = rules_snapshot.matching(&trigger).iter().any(|r| r.critical);
 
     if proxy.should_sample(is_critical) {
         let job = EvalJob {
@@ -220,7 +217,8 @@ pub async fn run_evaluator_worker(
         for rule in matched {
             for constraint in &rule.constraints {
                 match logic::eval(&constraint.ast, &ctx) {
-                    Ok(Value::Bool(true)) => { /* القيد محقق، لا شيء للتسجيل */ }
+                    Ok(Value::Bool(true)) => { /* القيد محقق، لا شيء للتسجيل */
+                    }
                     Ok(Value::Bool(false)) => {
                         metrics::MISMATCH_TOTAL.inc();
                         let rec = AnomalyRecord {
@@ -265,15 +263,20 @@ pub async fn run_evaluator_worker(
     }
 }
 
-
 #[cfg(test)]
 mod sampling_tests {
-    use super::{sample_rate_percent, CRITICAL_SAMPLE_RATE_PERCENT, LOW_LOAD_THRESHOLD_RPS, NORMAL_HIGH_LOAD_SAMPLE_RATE_PERCENT};
+    use super::{
+        sample_rate_percent, CRITICAL_SAMPLE_RATE_PERCENT, LOW_LOAD_THRESHOLD_RPS,
+        NORMAL_HIGH_LOAD_SAMPLE_RATE_PERCENT,
+    };
 
     #[test]
     fn critical_sampling_rate_is_fixed_at_all_loads() {
         assert_eq!(sample_rate_percent(true, 0), CRITICAL_SAMPLE_RATE_PERCENT);
-        assert_eq!(sample_rate_percent(true, LOW_LOAD_THRESHOLD_RPS + 1), CRITICAL_SAMPLE_RATE_PERCENT);
+        assert_eq!(
+            sample_rate_percent(true, LOW_LOAD_THRESHOLD_RPS + 1),
+            CRITICAL_SAMPLE_RATE_PERCENT
+        );
     }
 
     #[test]
