@@ -99,7 +99,8 @@ async fn main() -> anyhow::Result<()> {
         "/metrics",
         get(|| async { metrics::render() }),
     );
-    let metrics_server = axum::Server::bind(&metrics_addr).serve(metrics_app.into_make_service());
+    let metrics_listener = tokio::net::TcpListener::bind(&metrics_addr).await?;
+    let metrics_server = async move { axum::serve(metrics_listener, metrics_app).await };
 
     // ---- خادم الإدارة (القسم 5 المُصحح: يجب حمايته بـ mTLS في الإنتاج) ----
     let admin_state = Arc::new(admin::AdminState {
@@ -114,7 +115,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/rules/reload", post(admin::reload_rules))
         .route("/trace/:request_id", get(admin::get_trace))
         .with_state(admin_state);
-    let admin_server = axum::Server::bind(&admin_addr).serve(admin_app.into_make_service());
+    let admin_listener = tokio::net::TcpListener::bind(&admin_addr).await?;
+    let admin_server = async move { axum::serve(admin_listener, admin_app).await };
 
     tracing::info!(
         proxy = %proxy_addr,
