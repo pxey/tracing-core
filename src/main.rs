@@ -72,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
         state_tracker.clone(),
         anomaly_store.clone(),
     );
+    tokio::spawn(proxy::run_sampling_rate_monitor(proxy_state.clone()));
 
     tokio::spawn(proxy::run_evaluator_worker(
         eval_rx,
