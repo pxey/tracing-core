@@ -17,6 +17,7 @@ use serde_json::Value;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -32,7 +33,8 @@ pub struct ProxyState {
     pub state_tracker: Arc<StateTracker>,
     pub anomaly_store: Arc<AnomalyStore>,
     pub sender: mpsc::Sender<EvalJob>,
-    request_counter_window: AtomicU64, // تقدير تقريبي للحمل الحالي (req/sec)
+    request_counter_window: AtomicU64, // Requests counted during the current one-second window.
+    current_rps: AtomicU64, // Completed one-second request count used for sampling.
 }
 
 pub struct EvalJob {
@@ -61,6 +63,7 @@ impl ProxyState {
             anomaly_store,
             sender: tx,
             request_counter_window: AtomicU64::new(0),
+            current_rps: AtomicU64::new(0),
         });
         (state, rx)
     }
@@ -69,18 +72,29 @@ impl ProxyState {
     /// - المسارات الحرجة تحتفظ بمعدل ثابت مرتفع (20%) بصرف النظر عن الحمل.
     /// - غير الحرجة تُخفَّض فقط عند الحمل العالي.
     fn should_sample(&self, critical: bool) -> bool {
-        let current_rps = self.request_counter_window.load(Ordering::Relaxed);
-        let roll: u64 = fastrand_u64() % 100;
+        let current_rps = self.current_rps.load(Ordering::Relaxed);
+        fastrand_u64() % 100 < sample_rate_percent(critical, current_rps)
+    }
+}
 
-        if critical {
-            return roll < CRITICAL_SAMPLE_RATE_PERCENT;
-        }
+fn sample_rate_percent(critical: bool, current_rps: u64) -> u64 {
+    if critical {
+        CRITICAL_SAMPLE_RATE_PERCENT
+    } else if current_rps > LOW_LOAD_THRESHOLD_RPS {
+        NORMAL_HIGH_LOAD_SAMPLE_RATE_PERCENT
+    } else {
+        100
+    }
+}
 
-        if current_rps > LOW_LOAD_THRESHOLD_RPS {
-            roll < NORMAL_HIGH_LOAD_SAMPLE_RATE_PERCENT
-        } else {
-            true // زمن استجابة منخفض ⇒ عينة 100% كما في المواصفة الأصلية
-        }
+/// Maintain a one-second request-rate estimate without blocking request handling.
+pub async fn run_sampling_rate_monitor(proxy: Arc<ProxyState>) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    interval.tick().await; // Skip the immediate first tick so the first window can accumulate.
+    loop {
+        interval.tick().await;
+        let requests = proxy.request_counter_window.swap(0, Ordering::Relaxed);
+        proxy.current_rps.store(requests, Ordering::Relaxed);
     }
 }
 
@@ -105,6 +119,7 @@ pub async fn handle(
     proxy: Arc<ProxyState>,
     req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
+    proxy.request_counter_window.fetch_add(1, Ordering::Relaxed);
     let request_id = Uuid::new_v4().to_string();
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
@@ -247,5 +262,31 @@ pub async fn run_evaluator_worker(
         );
 
         timer.observe_duration();
+    }
+}
+
+
+#[cfg(test)]
+mod sampling_tests {
+    use super::{sample_rate_percent, CRITICAL_SAMPLE_RATE_PERCENT, LOW_LOAD_THRESHOLD_RPS, NORMAL_HIGH_LOAD_SAMPLE_RATE_PERCENT};
+
+    #[test]
+    fn critical_sampling_rate_is_fixed_at_all_loads() {
+        assert_eq!(sample_rate_percent(true, 0), CRITICAL_SAMPLE_RATE_PERCENT);
+        assert_eq!(sample_rate_percent(true, LOW_LOAD_THRESHOLD_RPS + 1), CRITICAL_SAMPLE_RATE_PERCENT);
+    }
+
+    #[test]
+    fn noncritical_sampling_is_full_at_or_below_threshold() {
+        assert_eq!(sample_rate_percent(false, 0), 100);
+        assert_eq!(sample_rate_percent(false, LOW_LOAD_THRESHOLD_RPS), 100);
+    }
+
+    #[test]
+    fn noncritical_sampling_is_reduced_above_threshold() {
+        assert_eq!(
+            sample_rate_percent(false, LOW_LOAD_THRESHOLD_RPS + 1),
+            NORMAL_HIGH_LOAD_SAMPLE_RATE_PERCENT
+        );
     }
 }
